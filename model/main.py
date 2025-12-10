@@ -54,7 +54,7 @@ if __name__ == '__main__':
         help='Seed for sampling the calibration data.'
     )
     parser.add_argument(
-        '--act_sort_metric', type=str, default='mean', choices=['mean', 'frobenius', 'hessian', 'inf'],
+        '--act_sort_metric', type=str, default='max', choices=['mean', 'frobenius', 'hessian', 'max'],
         help='The metric used to sort the activations.'
     )
    

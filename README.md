@@ -51,7 +51,7 @@ This might take a few minutes.
 
 Reorder_indices, select_num are needed for quantization:
 ```bash
-python reorder_indices.py --model /PATH/TO/YOUR/MODEL/ --samples 128 --seqlen 2048 --act_sort_metric inf
+python reorder_indices.py --model /PATH/TO/YOUR/MODEL/ --samples 128 --seqlen 2048 --act_sort_metric max
 ```
 Results are saved in ./saved/
 

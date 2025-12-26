@@ -1,9 +1,11 @@
-# ARCQuant: Boosting Fine-Grained Quantization with Augmented Residual Channels for LLMs
+# ARCQuant: Boosting NVFP4 Quantization with Augmented Residual Channels for LLMs
 
+
+![arcquant](kernels/ARCQuant.png)
 
 **ARCQuant** is a high-performance quantization framework designed to resolve the conflict between **accuracy** and **inference efficiency** in low-bit LLMs.
 
-While fine-grained quantization (e.g., Block-wise/NVFP4) effectively isolates quantization noise, **activation outliers** still degrade performance in critical channels. Traditional mixed-precision methods address this by splitting computations into separate branches (INT4 + FP16), which introduces significant kernel launch overhead and memory fragmentation.
+While fine-grained quantization (e.g., Block-wise/NVFP4) effectively isolates quantization noise, **activation outliers** still degrade performance in critical channels. Traditional mixed-precision methods address this by splitting computations into separate branches, which introduces significant kernel launch overhead and memory fragmentation.
 
 **ARCQuant takes a different approach.** Instead of treating outliers separately, we leverage the **structural sparsity of quantization errors** in fine-grained settings. We capture the quantization residuals of these critical channels and fuse them back into the computation as **Augmented Residual Channels (ARC)**.
 
@@ -69,5 +71,5 @@ python benchmarks/benchmark_e2e_arc.py --model 'llama-2-7b' --batch_size 8 --pre
 TensorRT efficiency:
 ```bash
 pip install tensorrt
-python benchmark/trt-fp8-prefill-llama.py
+python benchmarks/trt-fp8-prefill-llama.py
 ```

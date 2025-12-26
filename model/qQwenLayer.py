@@ -133,6 +133,11 @@ def get_hadamard(n):
         return torch.cat([torch.cat([H_n_minus_1, H_n_minus_1], dim=1),
                           torch.cat([H_n_minus_1, -H_n_minus_1], dim=1)], dim=0) / math.sqrt(2)
 
+def reorder_quantize_x(x, reorder_index, select_num):
+    scale = torch.max(x.abs()).float() / (448.0*6.0)
+    qx, scale_x = agemm.reorder_quantize_x(x/scale, reorder_index, select_num)
+    return qx, scale_x, scale
+
         
 class QQwen2RMSNorm(nn.Module):
     def __init__(

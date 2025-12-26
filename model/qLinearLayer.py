@@ -20,6 +20,11 @@ def find_qlinear_layers(module, name=''):
             child, name=name + '.' + name1 if name != '' else name1
         ))
     return res
+
+def reorder_quantize_w(w, reorder_index, select_num):
+    scale = torch.max(w).float() / (448.0*6.0)
+    qw, scale_w = agemm.reorder_quantize_w(w/scale, reorder_index, select_num)
+    return qw, scale_w, scale
     
 class QLinearLayer(nn.Module):
     def __init__(

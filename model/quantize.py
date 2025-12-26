@@ -274,16 +274,16 @@ def quantize_mxfp6_tensor(tensor, group_size=32):
 #         # q_error_k = quantize_int4_tensor(error_e[:, topk_index])
 #         return torch.cat([q_x, q_error_k], dim=1), scale_x, scale
 
-def reorder_quantize_w(w, reorder_index, select_num):
-    scale = torch.max(w) / (448.0*6.0)
-    # scale = 1.0
-    w = w / scale
-    qw, scale_w = agemm.reorder_quantize_w(w, reorder_index, select_num)
-    return qw, scale_w, scale
+# def reorder_quantize_w(w, reorder_index, select_num):
+#     scale = torch.max(w.abs()).float() / (448.0*6.0)
+#     # scale = 1.0
+#     w = w / scale
+#     qw, scale_w = agemm.reorder_quantize_w(w, reorder_index, select_num)
+#     return qw, scale_w, scale
 
-def reorder_quantize_x(x, reorder_index, select_num):
-    # scale = torch.max(x) / (448.0*6.0)
-    scale = 1.0
-    # x = x / scale
-    qx, scale_x = agemm.reorder_quantize_x(x, reorder_index, select_num)
-    return qx, scale_x, scale
+# def reorder_quantize_x(x, reorder_index, select_num):
+#     scale = torch.max(x.abs()).float() / (448.0*6.0)
+#     # scale = 1.0
+#     x = x / scale
+#     qx, scale_x = agemm.reorder_quantize_x(x, reorder_index, select_num)
+#     return qx, scale_x, scale

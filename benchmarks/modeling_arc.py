@@ -22,6 +22,11 @@ sys.path.append('./model/')
 from kv_cache import *
 from quantize import *
 
+def reorder_quantize_x(x, reorder_index, select_num):
+    scale = torch.max(x.abs()).float() / (448.0*6.0)
+    qx, scale_x = agemm.reorder_quantize_x(x/scale, reorder_index, select_num)
+    return qx, scale_x, scale
+
 class QLinearLayer(nn.Module):
     __constants__ = ["in_features", "out_features"]
     in_features: int
@@ -45,7 +50,6 @@ class QLinearLayer(nn.Module):
         else:
             self.register_parameter("bias", None)
         self.select_num = select_num
-
         self.scale = 1.0
         self.B = torch.zeros(out_features, (self.in_features+self.select_num)//2, dtype=torch.uint8, device='cuda')
         self.SFB = torch.ones(out_features * (self.in_features+self.select_num)//16, dtype=torch.uint8, device='cuda') * 127 

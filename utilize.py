@@ -552,6 +552,60 @@ def get_humaneval(nsamples, seed, seqlen, tokenizer):
 
 #     return select_nums, average_bits
     
+def get_adjusted_scale(act_scale, weight_scale, target_alpha, global_alpha=0.5):
+    """
+    计算需要填入 smooth_scales 的值，使得在 global_alpha 下达到 target_alpha 的效果。
+    """
+    # 避免除以 0
+    weight_scale = weight_scale.clamp(min=1e-5)
+    act_scale = act_scale.clamp(min=1e-5)
+    
+    # 幂次计算
+    p_act = target_alpha / global_alpha
+    p_weight = (target_alpha - global_alpha) / global_alpha
+    
+    return (act_scale.pow(p_act) * weight_scale.pow(p_weight))
+
+def get_grouped_weight_scale(model, layer_name):
+
+    current_module = model.model.get_submodule(layer_name)
+    
+
+    group_modules = [current_module]
+    
+    if "self_attn.q_proj" in layer_name or \
+       "self_attn.k_proj" in layer_name or \
+       "self_attn.v_proj" in layer_name:
+        
+        parent_name = layer_name.rsplit(".", 1)[0] # "layers.0.self_attn"
+        parent_module = model.model.get_submodule(parent_name)
+        
+        group_modules = [
+            parent_module.q_proj,
+            parent_module.k_proj,
+            parent_module.v_proj
+        ]
+
+    elif "mlp.gate_proj" in layer_name or \
+         "mlp.up_proj" in layer_name:
+        
+        parent_name = layer_name.rsplit(".", 1)[0] # "layers.0.mlp"
+        parent_module = model.model.get_submodule(parent_name)
+        
+        group_modules = [
+            parent_module.gate_proj,
+            parent_module.up_proj
+        ]
+        
+    
+    w_scales_list = []
+    for mod in group_modules:
+        w_s = mod.weight.abs().max(dim=0)[0]
+        w_scales_list.append(w_s)
+    
+    merged_w_scales = torch.stack(w_scales_list, dim=0).max(dim=0)[0]
+    
+    return merged_w_scales
 
 @torch.no_grad()
 def search_select_proportions(model, dataloader, device_, seqlen, reorder_index):
@@ -639,7 +693,6 @@ def search_select_proportions(model, dataloader, device_, seqlen, reorder_index)
             keys = keys[:, reorder_index[name].to(torch.int32)]
        
             threshold = keys.max(dim=-1, keepdim=True)[0] * 0.125
-            
      
             select_ratio = (keys > threshold).sum() / keys.numel()
             select_num = math.ceil(in_features * select_ratio / 64) * 64
@@ -649,6 +702,8 @@ def search_select_proportions(model, dataloader, device_, seqlen, reorder_index)
             total_bits += 4.5 * (in_features + select_num)
             print(f'{name}: {select_ratio*100:.2f}%, avg:{average_bits[name]:.2f}')
             select_nums[name] = select_num
+                
+            
             del keys
             
             gc.collect()

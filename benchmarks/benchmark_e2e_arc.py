@@ -203,6 +203,7 @@ def run_all_for_model(model, bsz, prefill, decode, config):
         _cleanup()
     else:
         time_decode = time_e2e = None
+        memory_decode = memory_prefill
     return time_prefill, time_decode, time_e2e, memory_decode
 
 

@@ -74,27 +74,11 @@ def main():
 
     print("Getting reording index...")
     reorder_index = get_reorder_index(model, act_scales, metric=args.act_sort_metric)
-
-
-    # if not os.path.exists(act_scores_filename):
-    #     print("Generating channel scores...")
-    #     dataloader, _ = get_dataset(
-    #         nsamples=args.samples, seed=0, seqlen=args.seqlen, tokenizer=enc
-    #     )
-
-    #     act_scores = get_act_stats(
-    #         model, dataloader, "cuda:0", metric='score', seqlen=args.seqlen, reorder_index=reorder_index
-    #     )
-    #     torch.save(act_scores, act_scores_filename)
-    #     del dataloader
-    # else:
-    #     print("Loading pre-saved channel scores...")
-    #     act_scores = torch.load(act_scores_filename)
     
     print("Getting proportions...")
 
     _, inps = get_dataset(
-                nsamples=2, seed=0, tokenizer=enc, seqlen=args.seqlen
+                nsamples=32, seed=0, tokenizer=enc, seqlen=args.seqlen
             )
     select_num, average_bits = search_select_proportions(model, inps, "cuda", args.seqlen, reorder_index)
     

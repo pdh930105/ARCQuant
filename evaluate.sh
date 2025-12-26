@@ -18,7 +18,7 @@ python ${dir}/model/main.py ${MODEL}\
 python ${dir}/model/main.py ${MODEL} \
         --act_sort_metric max\
         --dataset wikitext2\
-        --tasks piqa,arc_challenge,arc_easy,boolq,hellaswag,winogrande,lambada_openai \
+        --tasks piqa,arc_challenge,boolq,hellaswag,winogrande,lambada_openai,arc_easy \
         --lm_eval_num_fewshot 0 \
         --lm_eval_limit -1\
 

@@ -1,10 +1,11 @@
 import torch
 from collections import defaultdict
 
-from model_utils import reorder_model_llama, reorder_model_qwen
+from model_utils import reorder_model_llama, reorder_model_qwen, reorder_model_mixtral
 from parallel_utils import map_layers_to_multi_gpus
 from datautils import get_loaders
 from eval import *
+from smooth import *
 
 from lm_eval import tasks as lm_tasks
 from lm_eval import evaluator as lm_evaluator
@@ -87,7 +88,7 @@ if __name__ == '__main__':
     
     args = parser.parse_args()
 
-    model_name = args.model.split('/')[-2]
+    model_name = args.model.split('/')[-2] if len(args.model.split('/')[-1]) == 0 else args.model.split('/')[-1]
     assert model_name != None, "Please check the model path."
 
     if "llama" in args.model.lower():
@@ -97,6 +98,10 @@ if __name__ == '__main__':
     elif "qwen" in args.model.lower():
         model = get_qwen(args.model)
         reorder_model_func = reorder_model_qwen
+        
+    elif "mixtral" in args.model.lower():
+        model = get_mixtral(args.model)
+        reorder_model_func = reorder_model_mixtral
        
     model.eval()
 
@@ -182,6 +187,8 @@ if __name__ == '__main__':
         import logging
         from datetime import datetime
 
+        if not os.path.exists("./results/"):
+            os.makedirs("./results/")
         log_filename = f"./results/log_{model_name.lower()}_{args.tasks}_{datetime.now().strftime('%Y%m%d')}.log"
         logging.basicConfig(
                             filename=log_filename,

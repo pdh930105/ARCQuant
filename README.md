@@ -1,5 +1,11 @@
 # ARCQuant: Boosting NVFP4 Quantization with Augmented Residual Channels for LLMs
 
+<h5 align="center">
+
+[![arXiv](https://img.shields.io/badge/ARCQuant-2601.07475-b31b1b.svg?logo=arXiv)](https://arxiv.org/abs/2601.07475)
+ <br>
+
+</h5>
 
 ![arcquant](kernels/ARCQuant_Visualize.png)
 

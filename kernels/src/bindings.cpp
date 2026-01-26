@@ -6,6 +6,80 @@
 #include "reorder.cuh"
 #include <flashinfer.h>
 
+/**************************** Activation Quantization Kernel ****************************/
+
+#define CASE_REORDER_X_16(VAL) \
+    case VAL: \
+        run_reorder_x_bf16_nvfp4<16, VAL>( \
+            ptr_X, M, ptr_idx, \
+            ptr_QX, ptr_SFX, \
+            KQ, KE \
+        ); \
+        break;
+
+#define CASE_REORDER_X_32(VAL) \
+    case VAL: \
+        run_reorder32_x_bf16_nvfp4<32, VAL>( \
+            ptr_X, M, ptr_idx, \
+            ptr_QX, ptr_SFX, \
+            KQ, KE \
+        ); \
+        break;
+
+#define CASE_DOWN_X_32(VAL) \
+    case VAL: { \
+        auto tmp_X = torch::index_select(X, 1, reorder_index.to(torch::kInt32)); \
+        run_down32_x_bf16_nvfp4<32, VAL>( \
+            (cutlass::bfloat16_t *)tmp_X.data_ptr<at::BFloat16>(), \
+            M, \
+            ptr_QX, ptr_SFX, \
+            KQ, KE \
+        ); \
+    } break;
+
+/**************************** Weight Quantization Kernel ****************************/
+
+#define CASE_REORDER_W_16(VAL) \
+    case VAL: \
+        run_reorder_w_bf16_nvfp4<16, VAL>( \
+            ptr_W, N, ptr_idx, \
+            ptr_QW, ptr_SFW, \
+            KQ, KE \
+        ); \
+        break;
+
+#define CASE_REORDER_W_32(VAL) \
+    case VAL: \
+        run_reorder32_w_bf16_nvfp4<32, VAL>( \
+            ptr_W, N, ptr_idx, \
+            ptr_QW, ptr_SFW, \
+            KQ, KE \
+        ); \
+        break;
+
+#define CASE_DOWN_W_32(VAL) \
+    case VAL: { \
+        auto tmp_W = torch::index_select(W, 1, reorder_index.to(torch::kInt32)); \
+        run_down32_w_bf16_nvfp4<32, VAL>( \
+            (cutlass::bfloat16_t *)tmp_W.data_ptr<at::BFloat16>(), \
+            N, \
+            ptr_QW, ptr_SFW, \
+            KQ, KE \
+        ); \
+    } break;
+
+/**************************** RMSNorm Fusion Kernel ****************************/
+
+#define CASE_RUN_RMSNORM_X_KERNEL(VAL) \
+    case VAL: \
+        run_rmsnorm_x_bf16_nvfp4<16, VAL>( \
+            ptr_X, ptr_W, eps, \
+            M, ptr_idx, \
+            ptr_QX, ptr_SFX, \
+            KQ, KE \
+        ); \
+        break;
+
 inline size_t get_sfa_buffer_size_in_bytes(int num_rows, int K_dim) {
     auto layout = filter_zeros(nvfp4::get_layoutSFA(num_rows, K_dim));
     size_t num_elements = cute::size(layout);
@@ -54,84 +128,42 @@ std::tuple<torch::Tensor, torch::Tensor> reorder_quantize_x(
     int M = X.size(0);
     int KQ = X.size(1);
     int K = KQ + KE;
-    auto QX = torch::empty({M, K / 2}, torch::dtype(torch::kUInt8).device(X.device()));
-    auto SFX = torch::empty({(int)get_sfa_buffer_size_in_bytes(M, K)}, torch::dtype(torch::kUInt8).device(X.device()));
-    if (KQ == 4096) { // Llama
-        run_reorder_x_bf16_nvfp4<16, 4096>(
-            (cutlass::bfloat16_t *)X.data_ptr<at::BFloat16>(), M, reorder_index.data_ptr<int16_t>(), 
-            QX.data_ptr<uint8_t>(), reinterpret_cast<cutlass::float_ue4m3_t *>(SFX.data_ptr<uint8_t>()), 
-            KQ, KE
-        );
+    
+    auto options = torch::dtype(torch::kUInt8).device(X.device());
+    auto QX = torch::empty({M, K / 2}, options);
+    auto SFX = torch::empty({(int)get_sfa_buffer_size_in_bytes(M, K)}, options);
+
+    auto ptr_X   = (cutlass::bfloat16_t *)X.data_ptr<at::BFloat16>();
+    auto ptr_idx = reorder_index.data_ptr<int16_t>();
+    auto ptr_QX  = QX.data_ptr<uint8_t>();
+    auto ptr_SFX = reinterpret_cast<cutlass::float_ue4m3_t *>(SFX.data_ptr<uint8_t>());
+
+    switch (KQ) {
+        
+        CASE_REORDER_X_16(4096)
+        CASE_REORDER_X_16(5120)
+        CASE_REORDER_X_16(8192)
+        CASE_REORDER_X_16(11008)
+        CASE_REORDER_X_16(13824)
+        CASE_REORDER_X_16(14336)
+
+        CASE_REORDER_X_32(3584)
+        CASE_REORDER_X_32(18944)
+        CASE_DOWN_X_32(27648)
+        CASE_DOWN_X_32(28672)
+
+        default:
+            std::cerr << "KQ value is not valid: " << KQ << std::endl;
+            throw std::runtime_error("Value error in run_reorder_x_bf16_nvfp4");
     }
-    else if (KQ == 8192) { // Llama
-        run_reorder_x_bf16_nvfp4<16, 8192>(
-            (cutlass::bfloat16_t *)X.data_ptr<at::BFloat16>(), M, reorder_index.data_ptr<int16_t>(), 
-            QX.data_ptr<uint8_t>(), reinterpret_cast<cutlass::float_ue4m3_t *>(SFX.data_ptr<uint8_t>()), 
-            KQ, KE
-        );
-    }
-    else if (KQ == 14336) {
-        run_reorder_x_bf16_nvfp4<16, 14336>(
-            (cutlass::bfloat16_t *)X.data_ptr<at::BFloat16>(), M, reorder_index.data_ptr<int16_t>(), 
-            QX.data_ptr<uint8_t>(), reinterpret_cast<cutlass::float_ue4m3_t *>(SFX.data_ptr<uint8_t>()), 
-            KQ, KE
-        );
-    }
-    else if (KQ == 11008) {
-        run_reorder_x_bf16_nvfp4<16, 11008>(
-            (cutlass::bfloat16_t *)X.data_ptr<at::BFloat16>(), M, reorder_index.data_ptr<int16_t>(), 
-            QX.data_ptr<uint8_t>(), reinterpret_cast<cutlass::float_ue4m3_t *>(SFX.data_ptr<uint8_t>()), 
-            KQ, KE
-        );
-    }
-    else if (KQ == 5120) { // Qwen
-        run_reorder_x_bf16_nvfp4<16, 5120>(
-            (cutlass::bfloat16_t *)X.data_ptr<at::BFloat16>(), M, reorder_index.data_ptr<int16_t>(), 
-            QX.data_ptr<uint8_t>(), reinterpret_cast<cutlass::float_ue4m3_t *>(SFX.data_ptr<uint8_t>()), 
-            KQ, KE
-        );
-    }
-    else if (KQ == 13824) {
-        run_reorder_x_bf16_nvfp4<16, 13824>(
-            (cutlass::bfloat16_t *)X.data_ptr<at::BFloat16>(), M, reorder_index.data_ptr<int16_t>(), 
-            QX.data_ptr<uint8_t>(), reinterpret_cast<cutlass::float_ue4m3_t *>(SFX.data_ptr<uint8_t>()), 
-            KQ, KE
-        );
-    }
-    else if (KQ == 3584) { // Qwen
-        run_reorder32_x_bf16_nvfp4<32, 3584>(
-            (cutlass::bfloat16_t *)X.data_ptr<at::BFloat16>(), M, reorder_index.data_ptr<int16_t>(), 
-            QX.data_ptr<uint8_t>(), reinterpret_cast<cutlass::float_ue4m3_t *>(SFX.data_ptr<uint8_t>()), 
-            KQ, KE
-        );
-    }
-    else if (KQ == 18944) {
-        run_reorder32_x_bf16_nvfp4<32, 18944>(
-            (cutlass::bfloat16_t *)X.data_ptr<at::BFloat16>(), M, reorder_index.data_ptr<int16_t>(), 
-            QX.data_ptr<uint8_t>(), reinterpret_cast<cutlass::float_ue4m3_t *>(SFX.data_ptr<uint8_t>()), 
-            KQ, KE
-        );
-    }
-    else if (KQ == 27648) {
-        run_down32_x_bf16_nvfp4<32, 27648>(
-            (cutlass::bfloat16_t *)(torch::index_select(X, 1, reorder_index.to(torch::kInt32))).data_ptr<at::BFloat16>(), M, 
-            QX.data_ptr<uint8_t>(), reinterpret_cast<cutlass::float_ue4m3_t *>(SFX.data_ptr<uint8_t>()), 
-            KQ, KE
-        );
-    }
-    else if (KQ == 28672) {
-        run_down32_x_bf16_nvfp4<32, 28672>(
-            (cutlass::bfloat16_t *)(torch::index_select(X, 1, reorder_index.to(torch::kInt32))).data_ptr<at::BFloat16>(), M, 
-            QX.data_ptr<uint8_t>(), reinterpret_cast<cutlass::float_ue4m3_t *>(SFX.data_ptr<uint8_t>()), 
-            KQ, KE
-        );
-    }
-    else {
-        std::cerr << "K value is not valid !" << std::endl;
-        throw std::runtime_error(std::string("Value error in run_reorder_x_bf16_nvfp4 "));
-    }
+
     return std::make_tuple(QX, SFX);
 }
+
+#undef CASE_REORDER_X_16
+#undef CASE_REORDER_X_32
+#undef CASE_DOWN_X_32
+
 
 std::tuple<torch::Tensor, torch::Tensor> reorder_quantize_w(
         const torch::Tensor &W,
@@ -142,84 +174,41 @@ std::tuple<torch::Tensor, torch::Tensor> reorder_quantize_w(
     int N = W.size(0);
     int KQ = W.size(1);
     int K = KQ + KE;
-    auto QW = torch::empty({N, K / 2}, torch::dtype(torch::kUInt8).device(W.device()));
-    auto SFW = torch::empty({(int)get_sfb_buffer_size_in_bytes(N, K)}, torch::dtype(torch::kUInt8).device(W.device()));
-    if (KQ == 4096) { //Llama
-        run_reorder_w_bf16_nvfp4<16, 4096>(
-            (cutlass::bfloat16_t *)W.data_ptr<at::BFloat16>(), N, reorder_index.data_ptr<int16_t>(), 
-            QW.data_ptr<uint8_t>(), reinterpret_cast<cutlass::float_ue4m3_t *>(SFW.data_ptr<uint8_t>()), 
-            KQ, KE
-        );
+
+    auto options = torch::dtype(torch::kUInt8).device(W.device());
+    auto QW = torch::empty({N, K / 2}, options);
+    auto SFW = torch::empty({(int)get_sfb_buffer_size_in_bytes(N, K)}, options);
+    
+    auto ptr_W    = (cutlass::bfloat16_t *)W.data_ptr<at::BFloat16>();
+    auto ptr_idx  = reorder_index.data_ptr<int16_t>();
+    auto ptr_QW   = QW.data_ptr<uint8_t>();
+    auto ptr_SFW  = reinterpret_cast<cutlass::float_ue4m3_t *>(SFW.data_ptr<uint8_t>());
+
+    switch (KQ) {
+        
+        CASE_REORDER_W_16(4096)
+        CASE_REORDER_W_16(5120)
+        CASE_REORDER_W_16(8192)
+        CASE_REORDER_W_16(11008)
+        CASE_REORDER_W_16(13824)
+        CASE_REORDER_W_16(14336)
+
+        CASE_REORDER_W_32(3584)
+        CASE_REORDER_W_32(18944)
+        CASE_DOWN_W_32(27648)
+        CASE_DOWN_W_32(28672)
+
+        default:
+            std::cerr << "KQ value is not valid: " << KQ << std::endl;
+            throw std::runtime_error("Value error in run_reorder_w_bf16_nvfp4");
     }
-    else if (KQ == 8192) { //Llama
-        run_reorder_w_bf16_nvfp4<16, 8192>(
-            (cutlass::bfloat16_t *)W.data_ptr<at::BFloat16>(), N, reorder_index.data_ptr<int16_t>(), 
-            QW.data_ptr<uint8_t>(), reinterpret_cast<cutlass::float_ue4m3_t *>(SFW.data_ptr<uint8_t>()), 
-            KQ, KE
-        );
-    }
-    else if (KQ == 14336) {
-        run_reorder_w_bf16_nvfp4<16, 14336>(
-            (cutlass::bfloat16_t *)W.data_ptr<at::BFloat16>(), N, reorder_index.data_ptr<int16_t>(), 
-            QW.data_ptr<uint8_t>(), reinterpret_cast<cutlass::float_ue4m3_t *>(SFW.data_ptr<uint8_t>()), 
-            KQ, KE
-        );
-    }
-    else if (KQ == 11008) {
-        run_reorder_w_bf16_nvfp4<16, 11008>(
-            (cutlass::bfloat16_t *)W.data_ptr<at::BFloat16>(), N, reorder_index.data_ptr<int16_t>(), 
-            QW.data_ptr<uint8_t>(), reinterpret_cast<cutlass::float_ue4m3_t *>(SFW.data_ptr<uint8_t>()), 
-            KQ, KE
-        );
-    }
-    else if (KQ == 5120) { //Qwen
-        run_reorder_w_bf16_nvfp4<16, 5120>(
-            (cutlass::bfloat16_t *)W.data_ptr<at::BFloat16>(), N, reorder_index.data_ptr<int16_t>(), 
-            QW.data_ptr<uint8_t>(), reinterpret_cast<cutlass::float_ue4m3_t *>(SFW.data_ptr<uint8_t>()), 
-            KQ, KE
-        );
-    }
-    else if (KQ == 13824) {
-        run_reorder_w_bf16_nvfp4<16, 13824>(
-            (cutlass::bfloat16_t *)W.data_ptr<at::BFloat16>(), N, reorder_index.data_ptr<int16_t>(), 
-            QW.data_ptr<uint8_t>(), reinterpret_cast<cutlass::float_ue4m3_t *>(SFW.data_ptr<uint8_t>()), 
-            KQ, KE
-        );
-    }
-    else if (KQ == 3584) { //Qwen
-        run_reorder32_w_bf16_nvfp4<32, 3584>(
-            (cutlass::bfloat16_t *)W.data_ptr<at::BFloat16>(), N, reorder_index.data_ptr<int16_t>(), 
-            QW.data_ptr<uint8_t>(), reinterpret_cast<cutlass::float_ue4m3_t *>(SFW.data_ptr<uint8_t>()), 
-            KQ, KE
-        );
-    }
-    else if (KQ == 18944) {
-        run_reorder32_w_bf16_nvfp4<32, 18944>(
-            (cutlass::bfloat16_t *)W.data_ptr<at::BFloat16>(), N, reorder_index.data_ptr<int16_t>(), 
-            QW.data_ptr<uint8_t>(), reinterpret_cast<cutlass::float_ue4m3_t *>(SFW.data_ptr<uint8_t>()), 
-            KQ, KE
-        );
-    }
-    else if (KQ == 27648) {
-        run_down32_w_bf16_nvfp4<32, 27648>(
-            (cutlass::bfloat16_t *)(torch::index_select(W, 1, reorder_index.to(torch::kInt32))).data_ptr<at::BFloat16>(), N, 
-            QW.data_ptr<uint8_t>(), reinterpret_cast<cutlass::float_ue4m3_t *>(SFW.data_ptr<uint8_t>()), 
-            KQ, KE
-        );
-    }
-    else if (KQ == 28672) {
-        run_down32_w_bf16_nvfp4<32, 28672>(
-            (cutlass::bfloat16_t *)(torch::index_select(W, 1, reorder_index.to(torch::kInt32))).data_ptr<at::BFloat16>(), N, 
-            QW.data_ptr<uint8_t>(), reinterpret_cast<cutlass::float_ue4m3_t *>(SFW.data_ptr<uint8_t>()), 
-            KQ, KE
-        );
-    }
-    else {
-        std::cerr << "K value is not valid !" << std::endl;
-        throw std::runtime_error(std::string("Value error in run_reorder_w_bf16_nvfp4 "));
-    }
+
     return std::make_tuple(QW, SFW);
 }
+
+#undef CASE_REORDER_W_16
+#undef CASE_REORDER_W_32
+#undef CASE_DOWN_W_32
 
 std::tuple<torch::Tensor, torch::Tensor> rmsnorm_quantize_x(
         const torch::Tensor &X,
@@ -232,46 +221,34 @@ std::tuple<torch::Tensor, torch::Tensor> rmsnorm_quantize_x(
     int M = X.size(0);
     int KQ = X.size(1);
     int K = KQ + KE;
-    auto QX = torch::empty({M, K / 2}, torch::dtype(torch::kUInt8).device(X.device()));
-    auto SFX = torch::empty({(int)get_sfa_buffer_size_in_bytes(M, K)}, torch::dtype(torch::kUInt8).device(X.device()));
-    if (KQ == 4096) { // Llama
-        run_rmsnorm_x_bf16_nvfp4<16, 4096>(
-            (cutlass::bfloat16_t *)X.data_ptr<at::BFloat16>(), (cutlass::bfloat16_t *)W.data_ptr<at::BFloat16>(), eps, 
-            M, reorder_index.data_ptr<int16_t>(), 
-            QX.data_ptr<uint8_t>(), reinterpret_cast<cutlass::float_ue4m3_t *>(SFX.data_ptr<uint8_t>()), 
-            KQ, KE
-        );
+
+    auto options = torch::dtype(torch::kUInt8).device(X.device());
+    auto QX = torch::empty({M, K / 2}, options);
+    auto SFX = torch::empty({(int)get_sfa_buffer_size_in_bytes(M, K)}, options);
+
+    auto ptr_X    = (cutlass::bfloat16_t *)X.data_ptr<at::BFloat16>();
+    auto ptr_W    = (cutlass::bfloat16_t *)W.data_ptr<at::BFloat16>();
+    auto ptr_idx  = reorder_index.data_ptr<int16_t>();
+    
+    auto ptr_QX   = QX.data_ptr<uint8_t>();
+    auto ptr_SFX  = reinterpret_cast<cutlass::float_ue4m3_t *>(SFX.data_ptr<uint8_t>());
+
+    switch (KQ) {
+        
+        CASE_RUN_RMSNORM_X_KERNEL(3584)
+        CASE_RUN_RMSNORM_X_KERNEL(4096)
+        CASE_RUN_RMSNORM_X_KERNEL(5120)
+        CASE_RUN_RMSNORM_X_KERNEL(8192)
+        
+        default:
+            std::cerr << "K value is not valid: " << KQ << std::endl;
+            throw std::runtime_error("Value error in run_rmsnorm_x_bf16_nvfp4");
     }
-    else if (KQ == 8192) { // Llama
-        run_rmsnorm_x_bf16_nvfp4<16, 8192>(
-            (cutlass::bfloat16_t *)X.data_ptr<at::BFloat16>(), (cutlass::bfloat16_t *)W.data_ptr<at::BFloat16>(), eps, 
-            M, reorder_index.data_ptr<int16_t>(), 
-            QX.data_ptr<uint8_t>(), reinterpret_cast<cutlass::float_ue4m3_t *>(SFX.data_ptr<uint8_t>()), 
-            KQ, KE
-        );
-    }
-    else if (KQ == 5120) { // Qwen
-        run_rmsnorm_x_bf16_nvfp4<16, 5120>(
-            (cutlass::bfloat16_t *)X.data_ptr<at::BFloat16>(), (cutlass::bfloat16_t *)W.data_ptr<at::BFloat16>(), eps, 
-            M, reorder_index.data_ptr<int16_t>(), 
-            QX.data_ptr<uint8_t>(), reinterpret_cast<cutlass::float_ue4m3_t *>(SFX.data_ptr<uint8_t>()), 
-            KQ, KE
-        );
-    }
-    else if (KQ == 3584) { // Qwen
-        run_rmsnorm_x_bf16_nvfp4<16, 3584>(
-            (cutlass::bfloat16_t *)X.data_ptr<at::BFloat16>(), (cutlass::bfloat16_t *)W.data_ptr<at::BFloat16>(), eps, 
-            M, reorder_index.data_ptr<int16_t>(), 
-            QX.data_ptr<uint8_t>(), reinterpret_cast<cutlass::float_ue4m3_t *>(SFX.data_ptr<uint8_t>()), 
-            KQ, KE
-        );
-    }
-    else {
-        std::cerr << "K value is not valid !" << std::endl;
-        throw std::runtime_error(std::string("Value error in run_rmsnorm_x_bf16_nvfp4 "));
-    }
+
     return std::make_tuple(QX, SFX);
 }
+
+#undef CASE_RUN_RMSNORM_X_KERNEL
 
 // ===== Flash Infer ======
 inline void check_shape(const torch::Tensor &a, const torch::Tensor &b,

@@ -4,8 +4,8 @@ import torch
 import torch.nn.functional as F
 import time
 import agemm  
-step = 27648 // 16
-M, N, K = 1, 5120, 27648
+M, N, K = 128, 4096, 4096
+step = K // 16
 for i in range(K // step + 1):
     group = 16
     KE = step * i
@@ -21,8 +21,8 @@ for i in range(K // step + 1):
     # W = torch.eye(K, dtype=torch.bfloat16, device='cuda')
     reorder_index = torch.arange(K, dtype=torch.int16, device='cuda') 
 
-    scale_w = torch.max(W) / (448.0*6.0)
-    scale_x = torch.max(X) / (448.0*6.0)
+    scale_w = torch.max(W.abs()) / (448.0*6.0)
+    scale_x = torch.max(X.abs()) / (448.0*6.0)
     # scale_w = 1.0
     # scale_x = 1.0
 
